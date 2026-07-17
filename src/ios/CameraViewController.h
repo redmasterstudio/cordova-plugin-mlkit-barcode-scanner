@@ -23,6 +23,7 @@
 
 - (void)closeScanner;
 - (void)sendResult:(MLKBarcode *)result;
+- (void)sendPhotoResult:(NSString *)photoPath;
 
 @end
 
