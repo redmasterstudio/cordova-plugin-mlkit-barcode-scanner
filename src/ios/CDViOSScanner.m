@@ -180,4 +180,12 @@
     });
 }
 
+- (void)sendPhotoResult:(NSString *)photoPath {
+    // ปิด scanner VC แบบเดียวกับใน sendResult:/closeScanner เดิม แล้ว:
+    CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
+        messageAsDictionary:@{ @"text": @"", @"format": @"", @"type": @"",
+                               @"photoPath": photoPath }];
+    [self.commandDelegate sendPluginResult:result callbackId:/* callbackId ตัวเดียวกับ sendResult: */];
+}
+
 @end
