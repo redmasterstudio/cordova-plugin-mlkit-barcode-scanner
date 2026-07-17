@@ -180,12 +180,17 @@
     });
 }
 
-- (void)sendPhotoResult:(NSString *)photoPath {
-    // ปิด scanner VC แบบเดียวกับใน sendResult:/closeScanner เดิม แล้ว:
-    CDVPluginResult *result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
-        messageAsDictionary:@{ @"text": @"", @"format": @"", @"type": @"",
-                               @"photoPath": photoPath }];
-    [self.commandDelegate sendPluginResult:result callbackId:/* callbackId ตัวเดียวกับ sendResult: */];
+- (void)sendPhotoResult:(NSString *)photoPath
+{
+    [self.cameraViewController dismissViewControllerAnimated:NO completion:nil];
+    _scannerOpen = NO;
+
+    // index 3 = photoPath (JS wrapper อ่าน data[0..2] เป็น text/format/type เดิม)
+    NSArray* response = @[@"", @0, @0, photoPath];
+    CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsArray:response];
+
+    [self resetOrientation];
+    [self.commandDelegate sendPluginResult:pluginResult callbackId:_callback];
 }
 
 @end
