@@ -20,7 +20,7 @@
 
 #import "CameraViewController.h"
 
-@interface CameraViewController ()<AVCaptureVideoDataOutputSampleBufferDelegate>
+@interface CameraViewController ()<AVCaptureVideoDataOutputSampleBufferDelegate, AVCapturePhotoCaptureDelegate>
 
 @property(nonatomic, weak) IBOutlet UIView *placeHolderView;
 @property(nonatomic, weak) IBOutlet UIView *overlayView;
@@ -33,6 +33,9 @@
 
 @property(nonatomic, strong) MLKBarcodeScanner *barcodeDetector;
 @property(nonatomic, strong) UIButton *torchButton;
+
+@property(nonatomic, strong) AVCapturePhotoOutput *photoOutput;
+@property(nonatomic, strong) UIButton *photoButton;
 
 @end
 
@@ -81,6 +84,7 @@
 
     // Set up video processing pipeline.
     [self setUpVideoProcessing];
+    [self setUpPhotoOutput];
 
     // Set up camera preview.
     [self setUpCameraPreview];
@@ -220,6 +224,75 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
 
 }
 
+#pragma mark - Photo capture
+
+- (void)setUpPhotoOutput {
+    self.photoOutput = [[AVCapturePhotoOutput alloc] init];
+    [self.session beginConfiguration];
+    if ([self.session canAddOutput:self.photoOutput]) {
+        [self.session addOutput:self.photoOutput];
+    } else {
+        NSLog(@"Failed to add photo output");
+        self.photoOutput = nil;
+    }
+    [self.session commitConfiguration];
+}
+
+- (void)capturePhotoPressed:(id)sender {
+    if (self.photoOutput == nil) {
+        return;
+    }
+    self.photoButton.enabled = NO;   // กันกดรัวระหว่างรอ
+
+    // ล็อกภาพนิ่งเป็น portrait ตามที่หน้าจอถูกบังคับไว้
+    AVCaptureConnection *connection = [self.photoOutput connectionWithMediaType:AVMediaTypeVideo];
+    if (connection != nil && connection.isVideoOrientationSupported) {
+        connection.videoOrientation = AVCaptureVideoOrientationPortrait;
+    }
+
+    [self.photoOutput capturePhotoWithSettings:[AVCapturePhotoSettings photoSettings]
+                                      delegate:self];
+}
+
+- (void)captureOutput:(AVCapturePhotoOutput *)output
+didFinishProcessingPhoto:(AVCapturePhoto *)photo
+                error:(NSError *)error {
+    if (error != nil) {
+        NSLog(@"Photo capture failed: %@", error);
+        dispatch_async(dispatch_get_main_queue(), ^{ self.photoButton.enabled = YES; });
+        return;
+    }
+
+    NSData *jpegData = [photo fileDataRepresentation];
+    UIImage *rawImage = [UIImage imageWithData:jpegData];
+    if (rawImage == nil) {
+        dispatch_async(dispatch_get_main_queue(), ^{ self.photoButton.enabled = YES; });
+        return;
+    }
+
+    // วาดใหม่ให้ pixel ตั้งตรงจริง ไม่พึ่ง EXIF (กัน OCR อ่านภาพนอน)
+    UIGraphicsBeginImageContextWithOptions(rawImage.size, YES, 1.0);
+    [rawImage drawInRect:CGRectMake(0, 0, rawImage.size.width, rawImage.size.height)];
+    UIImage *normalized = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+
+    NSString *fileName = [NSString stringWithFormat:@"scan_capture_%.0f.jpg",
+                          [[NSDate date] timeIntervalSince1970] * 1000];
+    NSString *filePath = [NSTemporaryDirectory() stringByAppendingPathComponent:fileName];
+    if (![UIImageJPEGRepresentation(normalized, 0.9) writeToFile:filePath atomically:YES]) {
+        NSLog(@"Failed to write captured photo");
+        dispatch_async(dispatch_get_main_queue(), ^{ self.photoButton.enabled = YES; });
+        return;
+    }
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // ปิด session ลำดับเดียวกับ path สแกนเจอบาร์โค้ด
+        [self cleanupCaptureSession];
+        [self->_session stopRunning];
+        [self->delegate sendPhotoResult:[@"file://" stringByAppendingString:filePath]];
+    });
+}
+
 #pragma mark - Camera setup
 
 - (void)cleanupVideoProcessing {
@@ -232,6 +305,10 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
 - (void)cleanupCaptureSession {
     [self.session stopRunning];
     [self cleanupVideoProcessing];
+    if (self.photoOutput) {
+        [self.session removeOutput:self.photoOutput];
+    }
+    self.photoOutput = nil;
     self.session = nil;
     [self.previewLayer removeFromSuperlayer];
 }
@@ -327,6 +404,24 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
     self.torchButton.contentEdgeInsets = UIEdgeInsetsMake(10, 10, 10, 10);
 
     [self.view addSubview:self.torchButton];
+
+    CGFloat photoButtonSize = 58.0;
+    self.photoButton = [[UIButton alloc] init];
+    [self.photoButton addTarget:self
+                         action:@selector(capturePhotoPressed:)
+               forControlEvents:UIControlEventTouchUpInside];
+    [self.photoButton setImage:[UIImage systemImageNamed:@"camera.fill"]
+                      forState:UIControlStateNormal];
+    self.photoButton.tintColor = [UIColor blackColor];
+    self.photoButton.frame = CGRectMake(screenWidth/2 - photoButtonSize/2,
+                                        screenHeight - screenOffset - photoButtonSize,
+                                        photoButtonSize, photoButtonSize);
+    self.photoButton.backgroundColor = [UIColor colorWithWhite:1 alpha:0.6];
+    self.photoButton.transform = CGAffineTransformMakeRotation(M_PI / 2);
+    self.photoButton.layer.cornerRadius = photoButtonSize/2;
+    self.photoButton.layer.borderColor = [UIColor whiteColor].CGColor;
+    self.photoButton.layer.borderWidth = 2.0;
+    [self.view addSubview:self.photoButton];
 
     [self.view addSubview:_label1];
 
