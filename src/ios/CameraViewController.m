@@ -270,26 +270,34 @@ didFinishProcessingPhoto:(AVCapturePhoto *)photo
         return;
     }
 
-    // วาดใหม่ให้ pixel ตั้งตรงจริง ไม่พึ่ง EXIF (กัน OCR อ่านภาพนอน)
-    UIGraphicsBeginImageContextWithOptions(rawImage.size, YES, 1.0);
-    [rawImage drawInRect:CGRectMake(0, 0, rawImage.size.width, rawImage.size.height)];
+    // ย่อด้านยาวสุด ~1600px (เท่า pickImageNative ฝั่ง JS) + วาดใหม่ให้ pixel ตั้งตรงจริง
+    // ไม่พึ่ง EXIF (กัน OCR อ่านภาพนอน) — ขนาดนี้พอสำหรับ OCR ป้ายพัสดุ และคุม payload
+    // base64 ไม่ให้บวมเกินตอนข้าม bridge
+    CGFloat maxDim = 1600.0;
+    CGFloat scale = MIN(1.0, maxDim / MAX(rawImage.size.width, rawImage.size.height));
+    CGSize targetSize = CGSizeMake(rawImage.size.width * scale, rawImage.size.height * scale);
+
+    UIGraphicsBeginImageContextWithOptions(targetSize, YES, 1.0);
+    [rawImage drawInRect:CGRectMake(0, 0, targetSize.width, targetSize.height)];
     UIImage *normalized = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
 
-    NSString *fileName = [NSString stringWithFormat:@"scan_capture_%.0f.jpg",
-                          [[NSDate date] timeIntervalSince1970] * 1000];
-    NSString *filePath = [NSTemporaryDirectory() stringByAppendingPathComponent:fileName];
-    if (![UIImageJPEGRepresentation(normalized, 0.9) writeToFile:filePath atomically:YES]) {
-        NSLog(@"Failed to write captured photo");
+    // ส่งกลับเป็น base64 data URL แทน file:// path เพราะ WKWebView (scheme https +
+    // hostname ตาม config.xml) โหลด file:// เข้า <img>/canvas ไม่ได้
+    // → app.js ใช้ dataUrlToFile() ตัวเดียวกับ pickImageNative
+    NSData *jpeg = UIImageJPEGRepresentation(normalized, 0.85);
+    if (jpeg == nil) {
         dispatch_async(dispatch_get_main_queue(), ^{ self.photoButton.enabled = YES; });
         return;
     }
+    NSString *base64 = [jpeg base64EncodedStringWithOptions:0];
+    NSString *dataUrl = [@"data:image/jpeg;base64," stringByAppendingString:base64];
 
     dispatch_async(dispatch_get_main_queue(), ^{
         // ปิด session ลำดับเดียวกับ path สแกนเจอบาร์โค้ด
         [self cleanupCaptureSession];
         [self->_session stopRunning];
-        [self->delegate sendPhotoResult:[@"file://" stringByAppendingString:filePath]];
+        [self->delegate sendPhotoResult:dataUrl];
     });
 }
 
