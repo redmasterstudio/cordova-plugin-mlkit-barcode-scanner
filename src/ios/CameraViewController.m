@@ -381,7 +381,10 @@ didFinishProcessingPhoto:(AVCapturePhoto *)photo
     CGFloat screenOffset = (screenWidth/2 - frameWidth/2)/2 - buttonSize/2;
     NSLog(@"screenOffset %f", screenOffset);
 
-    _cancelButton.frame = CGRectMake(screenOffset, screenHeight-screenOffset-buttonSize, buttonSize, buttonSize);
+    // ยกแถวปุ่มขึ้นจากขอบล่าง — screenOffset อย่างเดียวทำให้ปุ่มชิดขอบเกินไป
+    CGFloat bottomMargin = 80.0;
+
+    _cancelButton.frame = CGRectMake(screenOffset, screenHeight-screenOffset-buttonSize-bottomMargin, buttonSize, buttonSize);
     _cancelButton.backgroundColor = [UIColor colorWithWhite:1 alpha:0.4];
     _cancelButton.transform=CGAffineTransformMakeRotation(M_PI / 2);
     _cancelButton.layer.cornerRadius = buttonSize/2;
@@ -405,7 +408,7 @@ didFinishProcessingPhoto:(AVCapturePhoto *)photo
     [self.torchButton setImage:torchIcon
                       forState:UIControlStateNormal];
 
-    self.torchButton.frame = CGRectMake(screenWidth-screenOffset-buttonSize, screenHeight-screenOffset-buttonSize, buttonSize, buttonSize);
+    self.torchButton.frame = CGRectMake(screenWidth-screenOffset-buttonSize, screenHeight-screenOffset-buttonSize-bottomMargin, buttonSize, buttonSize);
     self.torchButton.backgroundColor = [UIColor colorWithWhite:1 alpha:0.4];
     self.torchButton.transform=CGAffineTransformMakeRotation(M_PI / 2);
     self.torchButton.layer.cornerRadius = buttonSize/2;
@@ -413,19 +416,26 @@ didFinishProcessingPhoto:(AVCapturePhoto *)photo
 
     [self.view addSubview:self.torchButton];
 
-    CGFloat photoButtonSize = 58.0;
+    CGFloat photoButtonSize = 72.0;   // ใหญ่กว่าปุ่ม X/ไฟฉาย (45) ให้เด่นเป็นปุ่มหลัก
     self.photoButton = [[UIButton alloc] init];
     [self.photoButton addTarget:self
                          action:@selector(capturePhotoPressed:)
                forControlEvents:UIControlEventTouchUpInside];
-    [self.photoButton setImage:[UIImage systemImageNamed:@"camera.fill"]
-                      forState:UIControlStateNormal];
+    // คุมขนาดไอคอนด้วย symbol point size ชัดเจน (ไม่พึ่ง imageView scaling ที่เพี้ยนตอนหมุน)
+    UIImage *camIcon = [UIImage systemImageNamed:@"camera.fill"
+                        withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:30
+                                                                                          weight:UIImageSymbolWeightRegular]];
+    [self.photoButton setImage:camIcon forState:UIControlStateNormal];
+    self.photoButton.imageView.contentMode = UIViewContentModeScaleAspectFit;
     self.photoButton.tintColor = [UIColor blackColor];
     self.photoButton.frame = CGRectMake(screenWidth/2 - photoButtonSize/2,
-                                        screenHeight - screenOffset - photoButtonSize,
+                                        screenHeight - screenOffset - photoButtonSize - bottomMargin,
                                         photoButtonSize, photoButtonSize);
     self.photoButton.backgroundColor = [UIColor colorWithWhite:1 alpha:0.6];
     self.photoButton.transform = CGAffineTransformMakeRotation(M_PI / 2);
+    // ปุ่มถูกหมุน 90° เหมือนปุ่มอื่น แต่ camera.fill ไม่ symmetric เลยดูนอนตะแคง
+    // หมุนไอคอนสวนกลับ -90° ให้ตั้งตรง (ปุ่ม X/ไฟฉาย symmetric จึงไม่ต้องทำ)
+    self.photoButton.imageView.transform = CGAffineTransformMakeRotation(-M_PI / 2);
     self.photoButton.layer.cornerRadius = photoButtonSize/2;
     self.photoButton.layer.borderColor = [UIColor whiteColor].CGColor;
     self.photoButton.layer.borderWidth = 2.0;
