@@ -13,6 +13,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.util.Base64;
 import android.util.Log;
 
 import com.google.android.gms.common.api.CommonStatusCodes;
@@ -26,11 +27,14 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 
 /**
  * This class echoes a string called from JavaScript.
  */
+// ThaiEMS fork (hooks/patches/mlkit-barcode-scanner-android): ผลจากปุ่มถ่ายรูป + กัน crash ตอนกด back
 public class MLKitBarcodeScanner extends CordovaPlugin {
 
   private static final int RC_BARCODE_CAPTURE = 9001;
@@ -134,7 +138,45 @@ public class MLKitBarcodeScanner extends CordovaPlugin {
     super.onActivityResult(requestCode, resultCode, data);
 
     if (requestCode == RC_BARCODE_CAPTURE) {
-      if (resultCode == CommonStatusCodes.SUCCESS) {
+      if (resultCode == CommonStatusCodes.SUCCESS && data != null && data.getStringExtra(CaptureActivity.PhotoPath) != null) {
+        // ThaiEMS: ปุ่มถ่ายรูปในหน้าสแกน → ["", 0, 0, dataUrl] เหมือน sendPhotoResult ของ fork iOS
+        final String path = data.getStringExtra(CaptureActivity.PhotoPath);
+        final CallbackContext cb = _CallbackContext;
+        cordova.getThreadPool().execute(new Runnable() {
+          @Override
+          public void run() {
+            File file = new File(path);
+            try {
+              byte[] bytes = new byte[(int) file.length()];
+              FileInputStream in = new FileInputStream(file);
+              try {
+                int off = 0;
+                while (off < bytes.length) {
+                  int n = in.read(bytes, off, bytes.length - off);
+                  if (n < 0) break;
+                  off += n;
+                }
+              } finally {
+                in.close();
+              }
+              JSONArray result = new JSONArray();
+              result.put("");
+              result.put(0);
+              result.put(0);
+              result.put("data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP));
+              cb.sendPluginResult(new PluginResult(PluginResult.Status.OK, result));
+            } catch (IOException e) {
+              JSONArray result = new JSONArray();
+              result.put("PHOTO_FAILED");
+              result.put("");
+              result.put("");
+              cb.sendPluginResult(new PluginResult(PluginResult.Status.ERROR, result));
+            } finally {
+              file.delete();
+            }
+          }
+        });
+      } else if (resultCode == CommonStatusCodes.SUCCESS) {
         if (data != null) {
           Integer barcodeFormat = data.getIntExtra(CaptureActivity.BarcodeFormat, 0);
           Integer barcodeType = data.getIntExtra(CaptureActivity.BarcodeType, 0);
@@ -162,7 +204,9 @@ public class MLKitBarcodeScanner extends CordovaPlugin {
           Log.d("MLKitBarcodeScanner", "Barcode read: " + barcodeValue);
         }
       } else {
-        String err = data.getStringExtra("err");
+        // ThaiEMS: ปุ่ม back ของระบบเดิมคืน data = null → NullPointerException (แอป crash)
+        String err = data != null ? data.getStringExtra("err") : null;
+        if (err == null) err = "USER_CANCELLED";
         JSONArray result = new JSONArray();
         result.put(err);
         result.put("");
