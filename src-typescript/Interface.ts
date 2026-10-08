@@ -34,6 +34,7 @@ export interface IResult {
   text: string;
   format: string;
   type: string;
+  photoPath?: string;
 }
 
 export interface IError {
