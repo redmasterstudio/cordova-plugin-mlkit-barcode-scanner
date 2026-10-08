@@ -58,12 +58,13 @@ export class MLKitBarcodeScanner {
     failureCallback: (error: IError) => unknown,
   ): void {
     cordova.exec(
-      (data: [string, number, number]) => {
-        const [text, format, type] = data;
-        successCallback({
-          text,
-          format: this.getBarcodeFormat(format),
-          type: this.getBarcodeType(type),
+      (data: [string, number, number, string?]) => {
+  const [text, format, type, photoPath] = data;
+  successCallback({
+    photoPath,
+    text,
+    format: this.getBarcodeFormat(format),
+    type: this.getBarcodeType(type),
         });
       },
       (err: (string | null)[]) => {
