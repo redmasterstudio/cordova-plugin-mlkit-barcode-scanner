@@ -114,11 +114,16 @@
     <resource-file src="src/android/res/drawable/torch_inactive.xml"
       target="res/drawable/torch_inactive.xml" />
 
+    <resource-file src="src/android/res/drawable/scan_ic_camera.xml" target="res/drawable/scan_ic_camera.xml" />
+    <resource-file src="src/android/res/drawable/scan_ic_close.xml" target="res/drawable/scan_ic_close.xml" />
+    <resource-file src="src/android/res/drawable/scan_photo_button.xml" target="res/drawable/scan_photo_button.xml" />
+    <resource-file src="src/android/res/drawable/scan_round_button.xml" target="res/drawable/scan_round_button.xml" />
+
     <framework src="com.android.support:support-v4:27.1.0" />
     <framework src="com.android.support:design:27.1.0" />
 
     <framework src="com.google.android.gms:play-services-vision:17.0.2" />
-    <framework src="com.google.mlkit:barcode-scanning:16.2.0" />
+    <framework src="com.google.mlkit:barcode-scanning:17.3.0" />
 
     <framework src="androidx.camera:camera-core:1.0.0-beta05" />
     <framework src="androidx.camera:camera-camera2:1.0.0-beta05" />
