@@ -6,6 +6,8 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -13,6 +15,8 @@ import android.graphics.PixelFormat;
 import android.graphics.PorterDuff;
 import android.graphics.RectF;
 import android.os.Bundle;
+import android.app.Activity;
+import android.util.Log;
 
 import android.view.GestureDetector;
 import android.view.MotionEvent;
@@ -29,6 +33,8 @@ import androidx.camera.core.AspectRatio;
 import androidx.camera.core.Camera;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageAnalysis;
+import androidx.camera.core.ImageCapture;
+import androidx.camera.core.ImageCaptureException;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
@@ -45,19 +51,23 @@ import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.gms.tasks.Task;
 import com.google.android.material.snackbar.Snackbar;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.mlkit.vision.barcode.Barcode;
+import com.google.mlkit.vision.barcode.common.Barcode;
 import com.google.mlkit.vision.barcode.BarcodeScanner;
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions;
 import com.google.mlkit.vision.barcode.BarcodeScanning;
 import com.google.mlkit.vision.common.InputImage;
 import com.mobisys.cordova.plugins.mlkit.barcode.scanner.utils.BitmapUtils;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+// ThaiEMS fork (hooks/patches/mlkit-barcode-scanner-android): ปุ่มปิด + ปุ่มถ่ายรูป แบบ fork iOS
 public class CaptureActivity extends AppCompatActivity implements SurfaceHolder.Callback {
 
   public Integer BarcodeFormats;
@@ -66,6 +76,12 @@ public class CaptureActivity extends AppCompatActivity implements SurfaceHolder.
   public static final String BarcodeFormat = "MLKitBarcodeFormat";
   public static final String BarcodeType = "MLKitBarcodeType";
   public static final String BarcodeValue = "MLKitBarcodeValue";
+  // ThaiEMS: ปุ่มถ่ายรูป → ไฟล์ JPEG ใน cache (MLKitBarcodeScanner อ่านแล้วส่ง data URL ให้ JS เป็น data[3])
+  public static final String PhotoPath = "MLKitPhotoPath";
+  private static final String TAG = "MLKitCapture";
+  private ImageCapture imageCapture;
+  private ImageButton _PhotoButton;
+  private volatile boolean finishing = false;
 
   private ListenableFuture<ProcessCameraProvider> cameraProviderFuture;
   private ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -117,10 +133,27 @@ public class CaptureActivity extends AppCompatActivity implements SurfaceHolder.
 
     _TorchButton = findViewById(getResources().getIdentifier("torch_button", "id", this.getPackageName()));
 
+    ImageButton closeButton = findViewById(getResources().getIdentifier("close_button", "id", getPackageName()));
+    closeButton.setOnClickListener(new View.OnClickListener() {
+      @Override
+      public void onClick(View v) {
+        cancelScan();
+      }
+    });
+
+    _PhotoButton = findViewById(getResources().getIdentifier("photo_button", "id", getPackageName()));
+    _PhotoButton.setOnClickListener(new View.OnClickListener() {
+      @Override
+      public void onClick(View v) {
+        capturePhoto();
+      }
+    });
+
     _TorchButton.setOnClickListener(new View.OnClickListener() {
       @Override
       public void onClick(View v) {
 
+        if (camera == null) return;
         LiveData<Integer> flashState = camera.getCameraInfo().getTorchState();
         if (flashState.getValue() != null) {
           boolean state = flashState.getValue() == 1;
@@ -132,6 +165,95 @@ public class CaptureActivity extends AppCompatActivity implements SurfaceHolder.
       }
     });
 
+  }
+
+  // ThaiEMS: ปุ่ม X / ปุ่ม back = ยกเลิก (JS wrapper แปลง USER_CANCELLED เป็น {cancelled:true})
+  // เดิมกด back แล้ว onActivityResult ได้ data = null → NullPointerException
+  private void cancelScan() {
+    if (finishing) return;
+    finishing = true;
+    Intent data = new Intent();
+    data.putExtra("err", "USER_CANCELLED");
+    setResult(Activity.RESULT_CANCELED, data);
+    finish();
+  }
+
+  @Override
+  public void onBackPressed() {
+    cancelScan();
+  }
+
+  // ThaiEMS: ถ่ายภาพนิ่ง → หมุนให้ตั้งตรง → ย่อด้านยาว 1600px → JPEG 85% (เท่า fork iOS)
+  // เขียนลงไฟล์ เพราะ base64 ขนาดนี้ส่งผ่าน Intent ไม่ได้ (เกินขนาด Binder ~1MB)
+  private void capturePhoto() {
+    if (imageCapture == null || finishing) return;
+    _PhotoButton.setEnabled(false); // กันกดรัวระหว่างรอ
+    imageCapture.takePicture(executor, new ImageCapture.OnImageCapturedCallback() {
+      @Override
+      public void onCaptureSuccess(@NonNull ImageProxy image) {
+        String path = null;
+        try {
+          path = saveCapturedImage(image);
+        } catch (Exception e) {
+          Log.e(TAG, "save photo failed", e);
+        } finally {
+          image.close();
+        }
+        final String result = path;
+        runOnUiThread(new Runnable() {
+          @Override
+          public void run() {
+            if (result == null || finishing) {
+              _PhotoButton.setEnabled(true);
+              return;
+            }
+            finishing = true;
+            Intent data = new Intent();
+            data.putExtra(PhotoPath, result);
+            setResult(CommonStatusCodes.SUCCESS, data);
+            finish();
+          }
+        });
+      }
+
+      @Override
+      public void onError(@NonNull ImageCaptureException e) {
+        Log.e(TAG, "photo capture failed", e);
+        runOnUiThread(new Runnable() {
+          @Override
+          public void run() {
+            _PhotoButton.setEnabled(true);
+          }
+        });
+      }
+    });
+  }
+
+  private String saveCapturedImage(ImageProxy image) throws Exception {
+    ByteBuffer buffer = image.getPlanes()[0].getBuffer();
+    byte[] bytes = new byte[buffer.remaining()];
+    buffer.get(bytes);
+    Bitmap raw = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+    if (raw == null) return null;
+
+    int rotation = image.getImageInfo().getRotationDegrees();
+    float maxDim = 1600f;
+    float scale = Math.min(1f, maxDim / Math.max(raw.getWidth(), raw.getHeight()));
+    Matrix m = new Matrix();
+    m.postScale(scale, scale);
+    if (rotation != 0) m.postRotate(rotation);
+    Bitmap out = Bitmap.createBitmap(raw, 0, 0, raw.getWidth(), raw.getHeight(), m, true);
+    if (out != raw) raw.recycle();
+
+    File file = new File(getCacheDir(), "mlkit_scan_photo.jpg");
+    FileOutputStream fos = new FileOutputStream(file);
+    try {
+      out.compress(Bitmap.CompressFormat.JPEG, 85, fos);
+    } finally {
+      fos.close();
+      out.recycle();
+    }
+    return file.getAbsolutePath();
   }
 
   // ----------------------------------------------------------------------------
@@ -357,7 +479,8 @@ public class CaptureActivity extends AppCompatActivity implements SurfaceHolder.
                  * getPackageName())); imageView.setImageBitmap(bitmap);
                  */
 
-                if (barCodes.size() > 0) {
+                if (barCodes.size() > 0 && !finishing) {
+                  finishing = true;
                   for (Barcode barcode : barCodes) {
                     // Toast.makeText(CaptureActivity.this, "FOUND: " + barcode.getDisplayValue(),
                     // Toast.LENGTH_SHORT).show();
@@ -377,7 +500,7 @@ public class CaptureActivity extends AppCompatActivity implements SurfaceHolder.
                     data.putExtra(BarcodeValue, value);
                     setResult(CommonStatusCodes.SUCCESS, data);
                     finish();
-
+                    break;
                   }
                 }
               }
@@ -396,7 +519,19 @@ public class CaptureActivity extends AppCompatActivity implements SurfaceHolder.
 
     });
 
-    camera = cameraProvider.bindToLifecycle((LifecycleOwner) this, cameraSelector, imageAnalysis, preview);
+    imageCapture = new ImageCapture.Builder()
+        .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+        .setTargetRotation(mCameraView.getDisplay() != null ? mCameraView.getDisplay().getRotation() : android.view.Surface.ROTATION_0)
+        .build();
+    try {
+      camera = cameraProvider.bindToLifecycle((LifecycleOwner) this, cameraSelector, imageAnalysis, preview, imageCapture);
+    } catch (IllegalArgumentException e) {
+      // บางเครื่องรวม 3 use case ไม่ได้ → สแกนได้ปกติแต่ไม่มีปุ่มถ่ายรูป
+      Log.w(TAG, "ImageCapture not supported with analysis+preview", e);
+      imageCapture = null;
+      _PhotoButton.setVisibility(View.GONE);
+      camera = cameraProvider.bindToLifecycle((LifecycleOwner) this, cameraSelector, imageAnalysis, preview);
+    }
   }
 
   /**
